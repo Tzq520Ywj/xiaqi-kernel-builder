@@ -6,34 +6,52 @@ on:
 jobs:
   build:
     runs-on: ubuntu-latest
-    
     steps:
-      - name: Checkout kernel source
-        run: |
-          cd /tmp
-          git clone --depth 1 https://github.com/hfdem/android_gki_kernel_5.15_common.git kernel_src
-          
-      - name: Install dependencies
+      - name: 1. 下载源码和工具链
         run: |
           sudo apt-get update -qq
           sudo apt-get install -y -qq build-essential libssl-dev bc bison flex libelf-dev git gcc-aarch64-linux-gnu g++-aarch64-linux-gnu clang llvm lld
-            
-      - name: Build Process
+          cd /tmp
+          git clone --depth 1 https://github.com/hfdem/android_gki_kernel_5.15_common.git kernel_src
+
+      - name: 2. 修改配置 (USB3.0/ZRAM/版本号)
         run: |
           cd /tmp/kernel_src
+          # 生成随机ID并保存
           RANDOM_ID=$(openssl rand -hex 4)
           echo "RANDOM_ID=$RANDOM_ID" >> $GITHUB_ENV
           
-          # 修改版本号和配置
+          # 修改内核版本名
           sed -i "s/EXTRAVERSION =.*/EXTRAVERSION = -XiaoQi+$RANDOM_ID/" Makefile
-          cp arch/arm64/configs/gki_defconfig .config
           
-          # 启用 USB 3.0 和其他优化
+          # 强制开启 USB 3.0 和 ZRAM 优化
+          cp arch/arm64/configs/gki_defconfig .config
           echo "CONFIG_USB_XHCI_HCD=y" >> .config
           echo "CONFIG_USB_XHCI_PCI=y" >> .config
           echo "CONFIG_USB_XHCI_PLATFORM=y" >> .config
           echo "CONFIG_ZRAM=y" >> .config
           echo "CONFIG_ZRAM_LZ4_COMPRESS=y" >> .config
+          echo "" | make oldconfig ARCH=arm64
+
+      - name: 3. 开始全力编译 (约需2-3小时)
+        run: |
+          cd /tmp/kernel_src
+          make -j$(nproc) ARCH=arm64 CC=clang LD=ld.lld LLVM=1 LLVM_IAS=0
+
+      - name: 4. 打包成刷机包 (AnyKernel3)
+        run: |
+          cd /tmp
+          git clone --depth 1 https://github.com/osm0sis/AnyKernel3.git
+          cp /tmp/kernel_src/arch/arm64/boot/Image.gz AnyKernel3/
+          cd AnyKernel3
+          sed -i "s/kernel.string=.*/kernel.string=XiaoQi Kernel $RANDOM_ID/" anykernel.sh
+          zip -r /tmp/XiaoQi-Kernel-Update.zip .
+
+      - name: 5. 上传成品
+        uses: actions/upload-artifact@v3
+        with:
+          name: XiaoQi-Kernel-Finished
+          path: /tmp/XiaoQi-Kernel-Update.zip
           
           # 开始编译
           echo "" | make oldconfig ARCH=arm64
