@@ -1,40 +1,66 @@
-name: Build
-on:
-  workflow_dispatch:
+name: Build Custom Kernel for Xiaomi 13
+
+on: [push, workflow_dispatch]
+
 jobs:
-  kernel:
+  build:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v3
-      - name: Build
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y build-essential libssl-dev bc bison flex libelf-dev git gcc-aarch64-linux-gnu clang llvm lld
-          cd /tmp
-          git clone --depth 1 https://github.com/hfdem/android_gki_kernel_5.15_common.git src
-          cd src
-          RANDOM_ID=$(openssl rand -hex 4)
-          sed -i "s/EXTRAVERSION =.*/EXTRAVERSION = -XiaoQi+$RANDOM_ID/" Makefile
-          cp arch/arm64/configs/gki_defconfig .config
-          echo "CONFIG_USB_XHCI_HCD=y" >> .config
-          echo "CONFIG_USB_XHCI_PCI=y" >> .config
-          echo "CONFIG_USB_XHCI_PLATFORM=y" >> .config
-          echo "CONFIG_ZRAM=y" >> .config
-          echo "CONFIG_ZRAM_LZ4_COMPRESS=y" >> .config
-          echo "" | make oldconfig ARCH=arm64
-          make -j$(nproc) ARCH=arm64 CC=clang LD=ld.lld LLVM=1 LLVM_IAS=0
-          cd /tmp
-          git clone --depth 1 https://github.com/osm0sis/AnyKernel3.git ak3
-          cp /tmp/src/arch/arm64/boot/Image.gz ak3/
-          cd ak3
-          zip -r /tmp/kernel.zip .
-      - name: Upload
-        uses: actions/upload-artifact@v3
-        with:
-          name: XiaoQi-Kernel
-          path: /tmp/kernel.zip
-      - name: Package
-        run: |
+    - name: Checkout
+      uses: actions/checkout@v4
+      with:
+        submodules: recursive
+
+    - name: Setup Environment
+      run: |
+        sudo apt-get update
+        sudo apt-get install -y build-essential flex bison libssl-dev libelf-dev bc python3
+
+    - name: Download Toolchain
+      run: |
+        mkdir -p $HOME/toolchains
+        cd $HOME/toolchains
+        # 请根据项目README确认准确的Clang版本
+        wget -q https://android.googlesource.com/platform/prebuilts/clang/host/linux-x86/+archive/refs/heads/main/clang-r487747c.tar.gz
+        mkdir clang && tar -xzf clang-r487747c.tar.gz -C clang
+
+    - name: Configure Kernel
+      env:
+        PATH: ${{ github.workspace }}/../toolchains/clang/bin:$PATH
+      run: |
+        cd ${{ github.workspace }}
+        # 1. 生成基础配置（请使用你设备的确切defconfig文件名）
+        make ARCH=arm64 CLANG_TRIPLE=aarch64-linux-gnu- CROSS_COMPILE=aarch64-linux-android- gki_defconfig O=out
+        # 2. 强制开启USB 3.0配置（示例）
+        ./scripts/config --file out/.config --set-str CONFIG_USB_XHCI_HCD y
+        # 可选：执行make oldconfig或make menuconfig进行其他调整
+
+    - name: Build Kernel
+      env:
+        PATH: ${{ github.workspace }}/../toolchains/clang/bin:$PATH
+      run: |
+        cd ${{ github.workspace }}
+        make ARCH=arm64 CLANG_TRIPLE=aarch64-linux-gnu- CROSS_COMPILE=aarch64-linux-android- -j$(nproc) O=out 2>&1 | tee build.log
+
+    - name: Package with AnyKernel3
+      run: |
+        cd ${{ github.workspace }}
+        git clone https://github.com/osm0sis/AnyKernel3.git
+        cp out/arch/arm64/boot/Image.gz AnyKernel3/
+        cd AnyKernel3
+        # 关键：在此编辑AnyKernel3的脚本，添加上文提到的内核参数
+        # 编辑 anykernel.sh，在 do.deviceck 或 patch_cmdline 函数中，添加：
+        # patch_cmdline "zram.size" "zram.size=16G"
+        # patch_cmdline "zram.compressor" "zram.compressor=lz4"
+        zip -r9 ../Custom_Kernel_Xiaomi13-$(date +%Y%m%d).zip . -x *.git*
+
+    - name: Upload Artifacts
+      uses: actions/upload-artifact@v4
+      with:
+        name: Custom-Kernel-Build
+        path: |
+          ${{ github.workspace }}/out/arch/arm64/boot/Image.gz
+          ${{ github.workspace }}/Custom_Kernel_Xiaomi13-*.zip        run: |
           cd /tmp
           git clone --depth 1 https://github.com/osm0sis/AnyKernel3.git
           cp /tmp/kernel_src/arch/arm64/boot/Image.gz AnyKernel3/
