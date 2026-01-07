@@ -1,25 +1,19 @@
-name: Build XiaoQi Kernel
+name: Build
 on:
   workflow_dispatch:
 jobs:
-  build:
+  kernel:
     runs-on: ubuntu-latest
     steps:
-      - name: Setup Environment
+      - uses: actions/checkout@v3
+      - name: Build
         run: |
           sudo apt-get update
           sudo apt-get install -y build-essential libssl-dev bc bison flex libelf-dev git gcc-aarch64-linux-gnu clang llvm lld
-      
-      - name: Download Source
-        run: |
           cd /tmp
-          git clone --depth 1 https://github.com/hfdem/android_gki_kernel_5.15_common.git kernel_src
-
-      - name: Configure and Patch
-        run: |
-          cd /tmp/kernel_src
+          git clone --depth 1 https://github.com/hfdem/android_gki_kernel_5.15_common.git src
+          cd src
           RANDOM_ID=$(openssl rand -hex 4)
-          echo "RANDOM_ID=$RANDOM_ID" >> $GITHUB_ENV
           sed -i "s/EXTRAVERSION =.*/EXTRAVERSION = -XiaoQi+$RANDOM_ID/" Makefile
           cp arch/arm64/configs/gki_defconfig .config
           echo "CONFIG_USB_XHCI_HCD=y" >> .config
@@ -28,12 +22,17 @@ jobs:
           echo "CONFIG_ZRAM=y" >> .config
           echo "CONFIG_ZRAM_LZ4_COMPRESS=y" >> .config
           echo "" | make oldconfig ARCH=arm64
-
-      - name: Build Kernel
-        run: |
-          cd /tmp/kernel_src
           make -j$(nproc) ARCH=arm64 CC=clang LD=ld.lld LLVM=1 LLVM_IAS=0
-
+          cd /tmp
+          git clone --depth 1 https://github.com/osm0sis/AnyKernel3.git ak3
+          cp /tmp/src/arch/arm64/boot/Image.gz ak3/
+          cd ak3
+          zip -r /tmp/kernel.zip .
+      - name: Upload
+        uses: actions/upload-artifact@v3
+        with:
+          name: XiaoQi-Kernel
+          path: /tmp/kernel.zip
       - name: Package
         run: |
           cd /tmp
