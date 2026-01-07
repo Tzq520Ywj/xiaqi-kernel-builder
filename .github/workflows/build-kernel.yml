@@ -12,28 +12,49 @@ jobs:
         run: |
           cd /tmp
           git clone --depth 1 https://github.com/hfdem/android_gki_kernel_5.15_common.git kernel_src
-          cd kernel_src
           
       - name: Install dependencies
         run: |
           sudo apt-get update -qq
-          sudo apt-get install -y -qq \
-            build-essential libssl-dev bc bison flex libelf-dev \
-            git gcc-aarch64-linux-gnu g++-aarch64-linux-gnu \
-            clang llvm lld
+          sudo apt-get install -y -qq build-essential libssl-dev bc bison flex libelf-dev git gcc-aarch64-linux-gnu g++-aarch64-linux-gnu clang llvm lld
             
-      - name: Generate random ID
+      - name: Build Process
         run: |
+          cd /tmp/kernel_src
           RANDOM_ID=$(openssl rand -hex 4)
           echo "RANDOM_ID=$RANDOM_ID" >> $GITHUB_ENV
           
-      - name: Modify kernel version
-        run: |
-          cd /tmp/kernel_src
-          sed -i "s/^EXTRAVERSION =.*/EXTRAVERSION = -XiaoQi+${RANDOM_ID}/" Makefile
+          # 修改版本号和配置
+          sed -i "s/EXTRAVERSION =.*/EXTRAVERSION = -XiaoQi+$RANDOM_ID/" Makefile
+          cp arch/arm64/configs/gki_defconfig .config
           
-      - name: Configure kernel
+          # 启用 USB 3.0 和其他优化
+          echo "CONFIG_USB_XHCI_HCD=y" >> .config
+          echo "CONFIG_USB_XHCI_PCI=y" >> .config
+          echo "CONFIG_USB_XHCI_PLATFORM=y" >> .config
+          echo "CONFIG_ZRAM=y" >> .config
+          echo "CONFIG_ZRAM_LZ4_COMPRESS=y" >> .config
+          
+          # 开始编译
+          echo "" | make oldconfig ARCH=arm64
+          make -j$(nproc) ARCH=arm64 CC=clang LD=ld.lld LLVM=1 LLVM_IAS=0
+          
+      - name: Prepare AnyKernel3
         run: |
+          cd /tmp
+          git clone --depth 1 https://github.com/osm0sis/AnyKernel3.git
+          cd AnyKernel3
+          rm -rf .git
+          cp /tmp/kernel_src/arch/arm64/boot/Image.gz .
+          sed -i "s/kernel.string=.*/kernel.string=GKI 5.15 by XiaoQi+${{ env.RANDOM_ID }} [USB3.0 Enabled]/" anykernel.sh
+          zip -r -q /tmp/kernel-XiaoQi-${{ env.RANDOM_ID }}-USB3.0.zip .
+          
+      - name: Upload artifact
+        uses: actions/upload-artifact@v3
+        with:
+          name: kernel-XiaoQi-USB3.0
+          path: /tmp/*.zip
+          retention-days: 30
           cd /tmp/kernel_src
           cp arch/arm64/configs/gki_defconfig .config
           echo "" | make oldconfig ARCH=arm64
